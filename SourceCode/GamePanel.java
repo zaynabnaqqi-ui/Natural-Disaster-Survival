@@ -1,239 +1,324 @@
-import java.awt.*;
-import java.awt.event.*;
-import java.awt.image.BufferedImage;
+import javafx.animation.AnimationTimer;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.image.Image;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.Pane;
+import javafx.scene.media.AudioClip;
+import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
+import javafx.stage.Stage;
 import java.io.File;
-import javax.imageio.ImageIO;
-import javax.sound.sampled.*;
-import javax.swing.*;
-public class GamePanel extends JPanel implements Runnable, MouseMotionListener, MouseListener {
 
-    final int WIDTH = 1310;
-    final int HEIGHT = 730;
+public class GamePanel extends Pane {
 
-    BufferedImage backgroundImage;
-    Thread gameThread;
-    JFrame parentWindow;
+    static final int WIDTH  = 1310;
+    static final int HEIGHT = 730;
 
-    String[] stages = {"FLOOD", "EARTHQUAKE", "VOLCANIC ACTIVITY", "HURRICANES", "WILDFIRE", "METEOROIDS", "MAMA'S CHAPPAL"};
-    String[] stageInfo = {
-    "Flooding occurs when water overflows onto normally dry land.",
-    "Sudden shaking of the ground caused by tectonic plate movement.",
-    "Eruption of magma, ash and gases from a volcano.",
-    "Powerful tropical storms with strong winds and heavy rain.",
-    "Uncontrolled fire that spreads rapidly through vegetation.",
-    "Rocky debris from space that enters Earth's atmosphere.",
-    "The most feared natural disaster. No survival tips exist."
+    private final Stage  parentStage;
+    private final Canvas canvas;
+
+    private Image      backgroundImage;
+    private AudioClip  hoverSound, clickSound;
+
+    // the four playable worlds shown in the right column
+    private final String[] worlds    = {"SUGARCREST", "MUSHROOMVILE", "MINE-WORLD", "PACMAN"};
+    private final int[]    triOffset = {0, 0, 0, 0};
+    private final double   startX    = 825;
+    private final double[] worldY    = {390, 416, 442, 469};
+    private int hoveredIndex     = -1;
+    private int lastHoveredIndex = -1;
+
+    // the seven disaster types shown in the left column
+    private final String[] stages = {
+        "FLOOD", "EARTHQUAKE", "VOLCANIC ACTIVITY",
+        "HURRICANES", "WILDFIRE", "METEOROIDS", "MAMA'S CHAPPAL"
     };
-    int[] triOffsetStage = {0, 0, 0, 0, 0, 0, 0};
-    Rectangle[] stageBounds = new Rectangle[7];
-    int hoveredStage = -1;
-    int lastHoveredStage = -1;
-    int startXStage = 163;
-    int[] stageY = {390, 416, 442, 469, 495, 521, 547};
-    boolean showPopup = false;
-    int popupStageIndex = -1;
-    // World names and positions
-    String[] worlds = {"SUGARCREST", "MUSHROOMVILE", "ENDER WORLD", "PACMAN"};
-    Color[] worldColors = {Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE};
+    private final String[] stageInfo = {
+        "Flooding occurs when water overflows onto normally dry land.",
+        "Sudden shaking of the ground caused by tectonic plate movement.",
+        "Eruption of magma, ash and gases from a volcano.",
+        "Powerful tropical storms with strong winds and heavy rain.",
+        "Uncontrolled fire that spreads rapidly through vegetation.",
+        "Rocky debris from space that enters Earth's atmosphere.",
+        "The most feared natural disaster. No survival tips exist lol."
+    };
+    private final int[]    triOffsetStage = {0, 0, 0, 0, 0, 0, 0};
+    private final double   startXStage    = 163;
+    private final double[] stageY         = {390, 416, 442, 469, 495, 521, 547};
+    private int hoveredStage     = -1;
+    private int lastHoveredStage = -1;
 
-    // Triangle x offset per world for animation
-    int[] triOffset = {0, 0, 0, 0};
+    // controls whether the info popup is visible and which disaster it shows
+    private boolean showPopup     = false;
+    private int     popupStageIdx = -1;
 
-    // Clickable area for each world (triangle + text)
-    Rectangle[] worldBounds = new Rectangle[4];
+    // the simulations button sits below the world list with its own amber styling
+    private static final double SIM_X = 825;
+    private static final double SIM_Y = 530;
+    private static final double SIM_W = 350;
+    private static final double SIM_H = 32;
+    private int     triOffsetSim   = 0;
+    private boolean hoveredSim     = false;
+    private boolean lastHoveredSim = false;
 
-    int hoveredIndex = -1;
-    int lastHoveredIndex = -1;
-    Clip hoverSound;
-    Clip clickSound;
-    // World text starts at x=855, each row y position
-    int startX = 825;
-    int[] worldY = {390, 416, 442, 469};
+    // precomputed rectangular hit areas so mouse checks are just a bounds test
+    private final double[] worldBoundsX = new double[4];
+    private final double[] worldBoundsY = new double[4];
+    private final double   BOUNDS_W     = 350;
+    private final double   BOUNDS_H     = 28;
 
-    public GamePanel(JFrame window) {
-        this.parentWindow = window;
-        this.setPreferredSize(new Dimension(WIDTH, HEIGHT));
+    private final double[] stageBoundsX = new double[7];
+    private final double[] stageBoundsY = new double[7];
 
-        try {
-            backgroundImage = ImageIO.read(new File("Assets/background.png"));
-        } catch (Exception e) {
-            System.out.println("Background image not found!");
-        }
+    private AnimationTimer animTimer;
 
-        // Define clickable bounds for each world (triangle to end of text)
+    public GamePanel(Stage stage) {
+        this.parentStage = stage;
+
+        canvas = new Canvas(WIDTH, HEIGHT);
+        getChildren().add(canvas);
+
+        // fill in the hit-box arrays once so we're not recalculating every mouse move
         for (int i = 0; i < 4; i++) {
-            worldBounds[i] = new Rectangle(startX, worldY[i] - 20, 350, 28);
+            worldBoundsX[i] = startX;
+            worldBoundsY[i] = worldY[i] - 20;
         }
         for (int i = 0; i < 7; i++) {
-            stageBounds[i] = new Rectangle(startXStage, stageY[i] - 20, 350, 28);
+            stageBoundsX[i] = startXStage;
+            stageBoundsY[i] = stageY[i] - 20;
         }
-    try {
-      hoverSound = AudioSystem.getClip();
-      hoverSound.open(AudioSystem.getAudioInputStream(new File("Assets/hover.wav")));
-      clickSound = AudioSystem.getClip();
-      clickSound.open(AudioSystem.getAudioInputStream(new File("Assets/click.wav")));
-    }
-    catch (Exception e) {
-      System.out.println("Sound error: " + e.getMessage());
-    }
-        addMouseMotionListener(this);
-        addMouseListener(this);
 
-        gameThread = new Thread(this);
-        gameThread.start();
+        loadAssets();
+        hookInput();
+        startLoop();
     }
 
-    public void run() {
-    while (true) {
-        // Worlds
-        for (int i = 0; i < 4; i++) {
-            if (i == hoveredIndex) {
-                if (triOffset[i] < 10) triOffset[i] += 2;
-            } else {
-                if (triOffset[i] > 0) triOffset[i] -= 2;
-            }
-        }
-        // Stages
-        for (int i = 0; i < 7; i++) {
-            if (i == hoveredStage) {
-                if (triOffsetStage[i] < 10) triOffsetStage[i] += 2;
-            } else {
-                if (triOffsetStage[i] > 0) triOffsetStage[i] -= 2;
-            }
-        }
-
-        repaint();
-        try { Thread.sleep(16); } catch (Exception e) {}
+    private void loadAssets() {
+        backgroundImage = loadImage("Assets/background.png");
+        hoverSound      = loadClip("Assets/hover.wav");
+        clickSound      = loadClip("Assets/click.wav");
     }
-}
 
-    public void paintComponent(Graphics g) {
-        super.paintComponent(g);
-
-        // Draw background
-        if (backgroundImage != null) {
-            g.drawImage(backgroundImage, 0, 0, WIDTH, HEIGHT, null);
-        } else {
-            g.setColor(Color.BLACK);
-            g.fillRect(0, 0, WIDTH, HEIGHT);
-        }
-
-        // Draw world options
-        Graphics2D g2 = (Graphics2D) g;
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2.setFont(new Font("Courier New", Font.BOLD, 29));
-
-        for (int i = 0; i < worlds.length; i++) {
-            int tx = startX + triOffset[i];
-            int ty = worldY[i];
-
-            // Draw triangle
-            int[] xp = {tx, tx + 14, tx};
-            int[] yp = {ty - 14, ty - 7, ty};
-            g2.setColor(worldColors[i]);
-            g2.fillPolygon(xp, yp, 3);
-
-            // Draw world name
-            g2.setColor(worldColors[i]);
-            g2.drawString(worlds[i], tx + 20, ty - 2);
-        }
-        for (int i = 0; i < stages.length; i++) {
-          int tx = startXStage + triOffsetStage[i];
-          int ty = stageY[i];
-
-          int[] xp = {tx, tx + 14, tx};
-          int[] yp = {ty - 14, ty - 7, ty};
-          g2.setColor(Color.WHITE);
-          g2.fillPolygon(xp, yp, 3);
-
-          g2.setColor(Color.WHITE);
-          g2.drawString(stages[i], tx + 20, ty - 2);
-        }
-
-    // Draw popup
-    if (showPopup && popupStageIndex >= 0) {
-    g2.setColor(new Color(0, 0, 0, 200));
-g2.fillRoundRect(360, 560, 650, 110, 20, 20);  // moved up a bit
-g2.setColor(Color.WHITE);
-g2.setFont(new Font("Courier New", Font.BOLD, 17));
-g2.drawString(stages[popupStageIndex], 380, 590);   // 20px from left edge of box
-g2.setFont(new Font("Courier New", Font.PLAIN, 16));
-g2.drawString(stageInfo[popupStageIndex], 380, 618);
-g2.setColor(Color.GRAY);
-g2.setFont(new Font("Courier New", Font.PLAIN, 13));
-g2.drawString("click anywhere to close", 380, 648);
-     }
+    // returns null gracefully if the file doesn't exist instead of crashing
+    static Image loadImage(String path) {
+        File f = new File(path);
+        if (!f.exists()) { System.out.println("Missing image: " + path); return null; }
+        return new Image(f.toURI().toString());
     }
- 
-    // Mouse hover detection
-    public void mouseMoved(MouseEvent e) {
-    hoveredStage = -1;     
-    hoveredIndex = -1;
-    for (int i = 0; i < 4; i++) {
-        if (worldBounds[i].contains(e.getPoint())) {
-            hoveredIndex = i;
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            if (hoveredIndex != lastHoveredIndex && hoverSound != null) {
-                hoverSound.setFramePosition(0);
-                hoverSound.start();
-            }
-            lastHoveredIndex = hoveredIndex;
-            return;
-        }
-    }
-    lastHoveredIndex = -1;
-    for (int i = 0; i < 7; i++) {
-    if (stageBounds[i].contains(e.getPoint())) {
-        hoveredStage = i;
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        if (hoveredStage != lastHoveredStage && hoverSound != null) {
-            hoverSound.setFramePosition(0);
-            hoverSound.start();
-        }
-        lastHoveredStage = hoveredStage;
-        return;
-    }
-   }
-    lastHoveredStage = -1;
-    setCursor(Cursor.getDefaultCursor());
-}
 
-    public void mouseClicked(MouseEvent e) {
-        for (int i = 0; i < 4; i++) {
-            if (worldBounds[i].contains(e.getPoint())) {
-                // Open world screen
-                if (clickSound != null) {
-                    clickSound.setFramePosition(0);
-                    clickSound.start();
+    // same null-safe pattern for audio so missing sounds just print a warning
+    static AudioClip loadClip(String path) {
+        File f = new File(path);
+        if (!f.exists()) { System.out.println("Missing sound: " + path); return null; }
+        return new AudioClip(f.toURI().toString());
+    }
+
+    private void hookInput() {
+        canvas.setOnMouseMoved(e -> {
+            // reset all hover states at the top, then re-detect below
+            hoveredStage = -1;
+            hoveredIndex = -1;
+            hoveredSim   = false;
+
+            for (int i = 0; i < 4; i++) {
+                if (inBounds(e, worldBoundsX[i], worldBoundsY[i], BOUNDS_W, BOUNDS_H)) {
+                    hoveredIndex = i;
+                    canvas.setCursor(javafx.scene.Cursor.HAND);
+                    // only fire the hover sound when we first enter an item, not every frame
+                    if (hoveredIndex != lastHoveredIndex) playClip(hoverSound);
+                    lastHoveredIndex = hoveredIndex;
+                    return;
                 }
-                parentWindow.getContentPane().removeAll();
-                WorldScreen ws = new WorldScreen(parentWindow, worlds[i], worldColors[i], this);
-                parentWindow.add(ws);
-                parentWindow.revalidate();
-                parentWindow.repaint();
+            }
+            lastHoveredIndex = -1;
+
+            if (inBounds(e, SIM_X, SIM_Y - 22, SIM_W, SIM_H)) {
+                hoveredSim = true;
+                canvas.setCursor(javafx.scene.Cursor.HAND);
+                if (!lastHoveredSim) playClip(hoverSound);
+                lastHoveredSim = true;
                 return;
             }
-        }
-        for (int i = 0; i < 7; i++) {
-          if (stageBounds[i].contains(e.getPoint())) {
-             if (clickSound != null) {
-                 clickSound.setFramePosition(0);
-                 clickSound.start();
-        }
-        popupStageIndex = i;
-        showPopup = true;
-        repaint();
-        return;
-     }
-    }
-     // Close popup on any other click
-     showPopup = false;
-     repaint();
+            lastHoveredSim = false;
+
+            for (int i = 0; i < 7; i++) {
+                if (inBounds(e, stageBoundsX[i], stageBoundsY[i], BOUNDS_W, BOUNDS_H)) {
+                    hoveredStage = i;
+                    canvas.setCursor(javafx.scene.Cursor.HAND);
+                    if (hoveredStage != lastHoveredStage) playClip(hoverSound);
+                    lastHoveredStage = hoveredStage;
+                    return;
+                }
+            }
+            lastHoveredStage = -1;
+            canvas.setCursor(javafx.scene.Cursor.DEFAULT);
+        });
+
+        canvas.setOnMouseClicked(e -> {
+            for (int i = 0; i < 4; i++) {
+                if (inBounds(e, worldBoundsX[i], worldBoundsY[i], BOUNDS_W, BOUNDS_H)) {
+                    playClip(clickSound);
+                    openWorld(worlds[i]);
+                    return;
+                }
+            }
+
+            if (inBounds(e, SIM_X, SIM_Y - 22, SIM_W, SIM_H)) {
+                playClip(clickSound);
+                openSimulations();
+                return;
+            }
+
+            for (int i = 0; i < 7; i++) {
+                if (inBounds(e, stageBoundsX[i], stageBoundsY[i], BOUNDS_W, BOUNDS_H)) {
+                    playClip(clickSound);
+                    popupStageIdx = i;
+                    showPopup     = true;
+                    return;
+                }
+            }
+
+            // clicking anywhere that isn't a button dismisses the popup
+            showPopup = false;
+        });
     }
 
-    public void mouseDragged(MouseEvent e) {}
-    public void mousePressed(MouseEvent e) {}
-    public void mouseReleased(MouseEvent e) {}
-    public void mouseEntered(MouseEvent e) {}
-    public void mouseExited(MouseEvent e) {}
+    private boolean inBounds(MouseEvent e, double bx, double by, double bw, double bh) {
+        return e.getX() >= bx && e.getX() <= bx + bw
+            && e.getY() >= by && e.getY() <= by + bh;
+    }
+
+    private void startLoop() {
+        animTimer = new AnimationTimer() {
+            @Override public void handle(long now) {
+                // each triangle nudges toward offset 10 when hovered and snaps back to 0 when not
+                for (int i = 0; i < 4; i++) {
+                    if (i == hoveredIndex) triOffset[i]      = Math.min(triOffset[i]      + 2, 10);
+                    else                   triOffset[i]      = Math.max(triOffset[i]      - 2,  0);
+                }
+                for (int i = 0; i < 7; i++) {
+                    if (i == hoveredStage) triOffsetStage[i] = Math.min(triOffsetStage[i] + 2, 10);
+                    else                   triOffsetStage[i] = Math.max(triOffsetStage[i] - 2,  0);
+                }
+                triOffsetSim = hoveredSim
+                    ? Math.min(triOffsetSim + 2, 10)
+                    : Math.max(triOffsetSim - 2, 0);
+                render();
+            }
+        };
+        animTimer.start();
+    }
+
+    private void render() {
+        GraphicsContext gc = canvas.getGraphicsContext2D();
+
+        if (backgroundImage != null) {
+            gc.drawImage(backgroundImage, 0, 0, WIDTH, HEIGHT);
+        } else {
+            // fallback so the screen isn't just transparent if the asset is missing
+            gc.setFill(Color.BLACK);
+            gc.fillRect(0, 0, WIDTH, HEIGHT);
+        }
+
+        // draw each world name with its animated triangle bullet on the right side
+        gc.setFont(Font.font("Courier New", FontWeight.BOLD, 29));
+        for (int i = 0; i < worlds.length; i++) {
+            double tx = startX + triOffset[i];
+            double ty = worldY[i];
+            gc.setFill(Color.WHITE);
+            gc.fillPolygon(new double[]{tx, tx + 14, tx}, new double[]{ty - 14, ty - 7, ty}, 3);
+            gc.fillText(worlds[i], tx + 20, ty - 2);
+        }
+
+        // simulations button uses amber/gold instead of white to stand out visually
+        {
+            double tx = startX + triOffsetSim;
+            double ty = SIM_Y;
+
+            if (hoveredSim) {
+                gc.setFill(Color.color(1.0, 0.75, 0.2, 0.18));
+                gc.fillRoundRect(tx - 4, ty - 26, SIM_W + 8, 32, 8, 8);
+            }
+
+            gc.setStroke(Color.color(1, 1, 1, 0.20));
+            gc.setLineWidth(1);
+            gc.strokeLine(startX, SIM_Y - 36, startX + 280, SIM_Y - 36);
+
+            Color simColor = hoveredSim ? Color.web("#ffd060") : Color.web("#c8a040");
+            gc.setFill(simColor);
+            gc.fillPolygon(
+                new double[]{tx, tx + 14, tx},
+                new double[]{ty - 14, ty - 7, ty}, 3);
+
+            gc.setFont(Font.font("Courier New", FontWeight.BOLD, 24));
+            gc.setFill(simColor);
+            gc.fillText("SIMULATIONS", tx + 20, ty - 2);
+
+            gc.setFont(Font.font("Courier New", 11));
+            gc.setFill(Color.color(1, 0.85, 0.4, 0.6));
+            gc.fillText("disaster simulation hub", tx + 20, ty + 16);
+        }
+
+        // draw each disaster name with its animated triangle bullet on the left side
+        gc.setFont(Font.font("Courier New", FontWeight.BOLD, 29));
+        for (int i = 0; i < stages.length; i++) {
+            double tx = startXStage + triOffsetStage[i];
+            double ty = stageY[i];
+            gc.setFill(Color.WHITE);
+            gc.fillPolygon(new double[]{tx, tx + 14, tx}, new double[]{ty - 14, ty - 7, ty}, 3);
+            gc.fillText(stages[i], tx + 20, ty - 2);
+        }
+
+        // popup box appears over the bottom of the screen when a disaster is clicked
+        if (showPopup && popupStageIdx >= 0) {
+            gc.setFill(Color.rgb(0, 0, 0, 0.78));
+            gc.fillRoundRect(360, 560, 650, 110, 20, 20);
+
+            gc.setFill(Color.WHITE);
+            gc.setFont(Font.font("Courier New", FontWeight.BOLD, 17));
+            gc.fillText(stages[popupStageIdx], 380, 590);
+
+            gc.setFont(Font.font("Courier New", 16));
+            gc.fillText(stageInfo[popupStageIdx], 380, 618);
+
+            gc.setFill(Color.GRAY);
+            gc.setFont(Font.font("Courier New", 13));
+            gc.fillText("click anywhere to close", 380, 648);
+        }
+    }
+
+    private void openWorld(String worldName) {
+        animTimer.stop();
+        WorldScreen ws = new WorldScreen(parentStage, worldName, Color.WHITE, this);
+        parentStage.getScene().setRoot(ws);
+    }
+
+    private void openSimulations() {
+        animTimer.stop();
+        SimulationMenu sm = new SimulationMenu(parentStage, () -> returnToThis());
+        parentStage.getScene().setRoot(sm);
+        sm.requestFocus();
+    }
+
+    public void playHover() { playClip(hoverSound); }
+    public void playClick() { playClip(clickSound); }
+
+    public void returnToThis() {
+        // restart the loop since we stopped it when we left this screen
+        animTimer.stop();
+        animTimer.start();
+        javafx.scene.Scene existing = parentStage.getScene();
+        if (existing != null) {
+            existing.setRoot(this);
+        } else {
+            parentStage.setScene(new javafx.scene.Scene(this, WIDTH, HEIGHT));
+        }
+        this.requestFocus();
+    }
+
+    static void playClip(AudioClip clip) {
+        if (clip != null) clip.play();
+    }
 }
